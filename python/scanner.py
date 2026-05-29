@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Literal
 
+import pandas as pd
 import polars as pl
 import yfinance as yf
 
@@ -175,24 +176,71 @@ def evaluate(symbol: str, df: pl.DataFrame, min_relvol: float = 1.3) -> dict | N
 
 # ---- data fetch ----------------------------------------------------------
 
+def _log(msg: str) -> None:
+    """Diagnostic output — stderr only. Stdout is reserved for the JSON the Rust
+    server parses; any print() to stdout from this script will break that."""
+    print(f"[scanner] {msg}", file=sys.stderr, flush=True)
+
+
 def fetch(universe: list[str], period: str = "6mo") -> dict[str, pl.DataFrame]:
-    raw = yf.download(
-        tickers=universe,
-        period=period,
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-    )
+    """Download daily bars for every symbol in `universe`. Robust to per-ticker
+    failures (delistings, transient Yahoo DNS errors, cache races) — bad tickers
+    are skipped with a stderr warning rather than crashing the scan.
+
+    threads=False is deliberate: yfinance's SQLite cache races under
+    threads=True and produces 'unable to open database file' on ~20+ tickers.
+    Sequential is slower but reliable."""
+    try:
+        raw = yf.download(
+            tickers=universe,
+            period=period,
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception as e:
+        _log(f"yf.download failed entirely: {type(e).__name__}: {e}")
+        return {}
+
+    if raw is None or (hasattr(raw, "empty") and raw.empty):
+        _log("yf.download returned no data")
+        return {}
+
     out: dict[str, pl.DataFrame] = {}
+    skipped: list[tuple[str, str]] = []
+
     for sym in universe:
         try:
-            df_pd = raw[sym].dropna().reset_index()
-        except KeyError:
-            continue
-        df_pd.columns = [str(c).lower() for c in df_pd.columns]
-        out[sym] = pl.from_pandas(df_pd)
+            if isinstance(raw.columns, pd.MultiIndex):
+                # Batch download returns columns indexed by (ticker, field).
+                if sym not in raw.columns.get_level_values(0):
+                    skipped.append((sym, "no_data"))
+                    continue
+                df_pd = raw[sym]
+            else:
+                # Single-ticker download returns a flat frame.
+                df_pd = raw
+
+            df_pd = df_pd.dropna().reset_index()
+            if df_pd.empty or len(df_pd) < 10:
+                skipped.append((sym, "too_few_bars"))
+                continue
+
+            df_pd.columns = [str(c).lower() for c in df_pd.columns]
+            out[sym] = pl.from_pandas(df_pd)
+        except Exception as e:
+            # Per-ticker failure (parse error, polars conversion glitch) — log and continue.
+            skipped.append((sym, type(e).__name__))
+
+    if skipped:
+        head = ", ".join(f"{s}({r})" for s, r in skipped[:8])
+        more = f" + {len(skipped) - 8} more" if len(skipped) > 8 else ""
+        _log(f"skipped {len(skipped)} of {len(universe)} tickers: {head}{more}")
+    if not out:
+        _log("WARNING: zero tickers loaded successfully. Check network and that the universe contains valid symbols.")
+
     return out
 
 

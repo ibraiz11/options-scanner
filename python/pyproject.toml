@@ -7,6 +7,9 @@ dependencies = [
     "polars>=1.12",
     "yfinance>=0.2.50",
     "pandas>=2.2",
+    # Polars requires pyarrow when converting pandas frames with nullable dtypes
+    # (yfinance returns Int64 volume columns under newer pandas versions).
+    "pyarrow>=15.0",
 ]
 
 [tool.ruff]
