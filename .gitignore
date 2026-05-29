@@ -1,0 +1,22 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Runtime state — contains trade history, not secrets, but per-machine
+/data
+
+# Secrets — never commit. The `.example` template is committed; the real file is not.
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python (uv) cache
+python/.venv
+python/__pycache__
+python/**/__pycache__

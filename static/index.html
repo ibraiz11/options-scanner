@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Options Play Scanner</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --line: #232735;
+    --text: #e6e8ec;
+    --muted: #8b91a3;
+    --bull: #22c55e;
+    --bear: #ef4444;
+    --accent: #6ea8fe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .disclaimer { font-size: 11px; color: var(--muted); }
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    background: var(--panel);
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    margin-bottom: 16px;
+  }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input, select, button {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+  }
+  button {
+    background: var(--accent);
+    color: #0b1220;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    font: 12px/1.4 ui-monospace, Menlo, monospace;
+    padding: 8px 10px;
+    resize: vertical;
+    min-height: 60px;
+  }
+  .status { font-size: 12px; color: var(--muted); margin: 8px 0 16px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 10px 12px;
+    text-align: right;
+    border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; background: #1a1e2a; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:hover td { background: #1c2030; }
+  .sym { font-weight: 600; }
+  .dir-bullish { color: var(--bull); font-weight: 600; }
+  .dir-bearish { color: var(--bear); font-weight: 600; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+  }
+  .pill-bull { background: rgba(34,197,94,0.12); color: var(--bull); }
+  .pill-bear { background: rgba(239,68,68,0.12); color: var(--bear); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .notes { color: var(--muted); font-size: 11px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .tab { padding: 10px 16px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-value { font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .good { color: var(--bull); }
+  .bad { color: var(--bear); }
+  .alert { padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-size: 13px; line-height: 1.5; }
+  .alert-error { background: rgba(239,68,68,0.12); border: 1px solid var(--bear); color: #fecaca; }
+  .alert-warn  { background: rgba(245,158,11,0.10); border: 1px solid #f59e0b; color: #fde68a; }
+  .alert-info  { background: rgba(110,168,254,0.10); border: 1px solid var(--accent); color: var(--text); }
+  .alert code { background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  .alert .dismiss { float:right; cursor:pointer; opacity:0.6; }
+  .alert .dismiss:hover { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📈 Options Play Scanner</h1>
+  <span class="disclaimer">Educational only. Not financial advice.</span>
+</header>
+
+<main>
+  <div id="globalAlerts"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="scan">Live scan</div>
+    <div class="tab" data-tab="backtest">Back-test</div>
+    <div class="tab" data-tab="approvals">Approvals & Risk</div>
+  </div>
+
+  <div class="panel active" id="panel-scan">
+  <div class="controls">
+    <div>
+      <label>Min score (1–7)</label>
+      <input id="minScore" type="number" value="3" step="0.5" min="0" max="10" />
+    </div>
+    <div>
+      <label>Min relative volume</label>
+      <input id="minRvol" type="number" value="1.3" step="0.1" min="0" max="10" />
+    </div>
+    <div>
+      <label>Direction</label>
+      <select id="direction">
+        <option value="both">Both</option>
+        <option value="bullish">Bullish only</option>
+        <option value="bearish">Bearish only</option>
+      </select>
+    </div>
+    <div style="display:flex; align-items:flex-end;">
+      <button id="runBtn">Run scan</button>
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <label>Custom tickers (optional, comma-separated; leave blank for default universe)</label>
+      <textarea id="tickers" placeholder="AAPL, MSFT, NVDA, TSLA"></textarea>
+    </div>
+  </div>
+
+  <div class="status" id="status">Ready.</div>
+
+  <table id="resultsTable">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Dir</th>
+        <th>Score</th>
+        <th>Entry</th>
+        <th>Stop</th>
+        <th>+10% Tgt</th>
+        <th>+20% Tgt</th>
+        <th>ATR</th>
+        <th>RVol</th>
+        <th>VWAP</th>
+        <th>MACD hist</th>
+        <th>Sweep</th>
+        <th>Notes</th>
+        <th>Execute</th>
+      </tr>
+    </thead>
+    <tbody id="resultsBody">
+      <tr><td colspan="13" class="empty">Click "Run scan" to fetch today's setups.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="panel" id="panel-approvals">
+    <div id="riskBanner" style="margin-bottom:16px;"></div>
+    <div class="stat-grid" id="riskStats"></div>
+
+    <h3 style="font-size:14px; color:var(--muted); margin: 24px 0 8px;">Trading mode</h3>
+    <div class="controls">
+      <div>
+        <label>Mode</label>
+        <select id="modeSelect">
+          <option value="standard">Standard — diversified, options-capable ($10k+)</option>
+          <option value="tiny">Tiny — 1 position, fractional shares ($100–$1,000)</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button id="modeApplyBtn">Apply mode</button>
+      </div>
+    </div>
+
+    <h3 style="font-size:14px; color:var(--muted); margin: 24px 0 8px;">Unattended scheduler</h3>
+    <div class="controls">
+      <div>
+        <label>Scan interval (sec)</label>
+        <input id="schedInterval" type="number" value="300" min="30" step="30" />
+      </div>
+      <div>
+        <label>Min score to auto-execute</label>
+        <input id="schedScore" type="number" value="4" step="0.5" />
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:8px;">
+        <button id="schedOnBtn" style="background:var(--bull); color:#0b1220;">Start auto-trading</button>
+        <button id="schedOffBtn" style="background:var(--bear); color:white;">Stop</button>
+      </div>
+    </div>
+
+    <div style="margin: 16px 0; display:flex; gap:8px;">
+      <button id="refreshStateBtn">Refresh</button>
+      <button id="killOnBtn" style="background:var(--bear); color:white;">Trip killswitch</button>
+      <button id="killOffBtn" style="background:var(--bull); color:#0b1220;">Reset killswitch</button>
+    </div>
+    <h3 style="font-size:14px; color:var(--muted); margin: 24px 0 8px;">Paper-trade simulation (back-test → executor + risk caps + slippage + MTM)</h3>
+    <div class="controls">
+      <div>
+        <label>Starting equity ($)</label>
+        <input id="simEquity" type="number" value="100000" step="1000" />
+      </div>
+      <div>
+        <label>Lookback</label>
+        <select id="simPeriod">
+          <option value="1y">1 year</option>
+          <option value="2y" selected>2 years</option>
+        </select>
+      </div>
+      <div>
+        <label>Min score</label>
+        <input id="simScore" type="number" value="3" step="0.5" />
+      </div>
+      <div>
+        <label>Slippage (bps each side)</label>
+        <input id="simSlip" type="number" value="10" step="1" min="0" max="500" />
+      </div>
+      <div>
+        <label>Walk-forward OOS</label>
+        <select id="simOos">
+          <option value="false">Single run (whole period)</option>
+          <option value="true" selected>Split: train then test</option>
+        </select>
+      </div>
+      <div>
+        <label>Train split</label>
+        <input id="simSplit" type="number" value="0.5" step="0.05" min="0.1" max="0.9" />
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button id="simRunBtn">Run simulation</button>
+      </div>
+    </div>
+    <div class="status" id="simStatus">Replays back-test signals through risk caps. ~1 min on default universe.</div>
+    <div id="simSummary"></div>
+    <table id="simEventsTable" style="margin-top:12px; display:none;">
+      <thead>
+        <tr><th>Date</th><th>Symbol</th><th>Kind</th><th>Detail</th><th>Equity after</th></tr>
+      </thead>
+      <tbody id="simEventsBody"></tbody>
+    </table>
+
+    <h3 style="font-size:14px; color:var(--muted); margin: 24px 0 8px;">Recent executor activity</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>Symbol</th><th>Side</th><th>Size</th><th>Notional</th>
+          <th>Broker</th><th>Risk decision</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tradeLog">
+        <tr><td colspan="8" class="empty">No executor activity yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="panel-backtest">
+    <div class="controls">
+      <div>
+        <label>Min score</label>
+        <input id="btScore" type="number" value="3" step="0.5" />
+      </div>
+      <div>
+        <label>Min rvol</label>
+        <input id="btRvol" type="number" value="1.3" step="0.1" />
+      </div>
+      <div>
+        <label>Hold bars (max)</label>
+        <input id="btHold" type="number" value="20" step="1" min="1" max="120" />
+      </div>
+      <div>
+        <label>Lookback</label>
+        <select id="btPeriod">
+          <option value="1y">1 year</option>
+          <option value="2y" selected>2 years</option>
+          <option value="5y">5 years</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button id="btRunBtn">Run back-test</button>
+      </div>
+      <div style="grid-column: 1 / -1;">
+        <label>Custom tickers (optional)</label>
+        <textarea id="btTickers" placeholder="leave blank for default universe"></textarea>
+      </div>
+    </div>
+
+    <div class="status" id="btStatus">Ready. Back-test takes 30–90s on the default universe.</div>
+
+    <div id="btSummary"></div>
+
+    <table id="btTable" style="margin-top:16px;">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Trades</th>
+          <th>Win %</th>
+          <th>Avg Return %</th>
+        </tr>
+      </thead>
+      <tbody id="btBody">
+        <tr><td colspan="4" class="empty">Run back-test to see per-symbol breakdown.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => n == null ? "—" : Number(n).toFixed(2);
+const tgtLabel = (dir) => dir === "bullish" ? ["+10% Tgt", "+20% Tgt"] : ["-10% Tgt", "-20% Tgt"];
+
+// ---- error reporting ------------------------------------------------------
+// Single point where every fetch goes through. Parses error JSON bodies so the
+// UI always shows the real reason, not just "HTTP 500".
+async function jsonFetch(url, opts) {
+  let res, bodyText, body;
+  try {
+    res = await fetch(url, opts);
+    bodyText = await res.text();
+    try { body = JSON.parse(bodyText); } catch { body = null; }
+  } catch (netErr) {
+    throw new Error(`Network error: ${netErr.message}. Is the server running on this port?`);
+  }
+  if (!res.ok) {
+    const detail = body?.error || body?.detail || bodyText.slice(0, 400) || `HTTP ${res.status}`;
+    const hint = body?.hint ? ` — ${body.hint}` : "";
+    const err = new Error(`${detail}${hint}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  // Some endpoints return 200 with a structured error/warning field.
+  if (body && body.error) {
+    const err = new Error(body.error + (body.hint ? ` — ${body.hint}` : ""));
+    err.body = body;
+    throw err;
+  }
+  return body ?? {};
+}
+
+function showAlert(kind, html, key) {
+  const container = $("globalAlerts");
+  if (key && container.querySelector(`[data-alert-key="${key}"]`)) return;
+  const div = document.createElement("div");
+  div.className = `alert alert-${kind}`;
+  if (key) div.dataset.alertKey = key;
+  div.innerHTML = `<span class="dismiss" onclick="this.parentElement.remove()">✕</span>${html}`;
+  container.appendChild(div);
+}
+function clearAlerts(key) {
+  if (!key) { $("globalAlerts").innerHTML = ""; return; }
+  $("globalAlerts").querySelectorAll(`[data-alert-key="${key}"]`).forEach(n => n.remove());
+}
+
+async function probeHealth() {
+  try {
+    const h = await jsonFetch("/api/health");
+    clearAlerts("health");
+    for (const c of (h.checks || [])) {
+      if (c.ok) continue;
+      const sev = c.severity === "warning" ? "warn" : "error";
+      const fix = c.fix ? `<br><b>Fix:</b> <code>${c.fix}</code>` : "";
+      showAlert(sev, `<b>${c.name}</b> — ${c.detail || "not ok"}${fix}`, "health");
+    }
+  } catch (e) {
+    showAlert("error", `Could not reach /api/health: ${e.message}`, "health");
+  }
+}
+
+async function runScan() {
+  const btn = $("runBtn");
+  btn.disabled = true;
+  $("status").textContent = "Scanning… this takes ~10–20s for the default universe.";
+
+  const params = new URLSearchParams({
+    min_score: $("minScore").value,
+    min_relvol: $("minRvol").value,
+    direction: $("direction").value,
+  });
+  const tickers = $("tickers").value.trim();
+  if (tickers) params.set("tickers", tickers);
+
+  try {
+    const data = await jsonFetch(`/api/scan?${params}`);
+    render(data.results || []);
+    $("status").textContent = `${data.count || 0} candidate(s) · scanned at ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    $("status").innerHTML = `<span style="color:var(--bear)">Scan failed:</span> ${err.message}`;
+    showAlert("error", `<b>Scan failed:</b> ${err.message}`, "scan");
+    probeHealth();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(rows) {
+  const body = $("resultsBody");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="14" class="empty">No setups matched. Try lowering the score or rvol filters.</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(r => {
+    const dirClass = r.direction === "bullish" ? "pill-bull" : "pill-bear";
+    const t10label = r.direction === "bullish" ? "+10%" : "-10%";
+    const t20label = r.direction === "bullish" ? "+20%" : "-20%";
+    return `
+      <tr>
+        <td class="sym">${r.symbol}</td>
+        <td><span class="pill ${dirClass}">${r.direction}</span></td>
+        <td>${fmt(r.score)}</td>
+        <td>${fmt(r.entry)}</td>
+        <td>${fmt(r.stop)}</td>
+        <td title="${t10label}">${fmt(r.target_10)}</td>
+        <td title="${t20label}">${fmt(r.target_20)}</td>
+        <td>${fmt(r.atr)}</td>
+        <td>${fmt(r.rel_volume)}</td>
+        <td>${fmt(r.vwap)}</td>
+        <td>${fmt(r.macd_hist)}</td>
+        <td>${r.sweep ? "✔" : "—"}</td>
+        <td class="notes">${r.notes}</td>
+        <td><button class="execBtn" data-sig='${JSON.stringify(r).replace(/'/g, "&#39;")}'>Send</button></td>
+      </tr>
+    `;
+  }).join("");
+}
+
+$("runBtn").addEventListener("click", runScan);
+
+// ---- tabs ----
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    document.getElementById(`panel-${t.dataset.tab}`).classList.add("active");
+  });
+});
+
+// ---- back-test ----
+async function runBacktest() {
+  const btn = $("btRunBtn");
+  btn.disabled = true;
+  $("btStatus").textContent = "Running back-test… please wait.";
+  $("btSummary").innerHTML = "";
+
+  const params = new URLSearchParams({
+    min_score: $("btScore").value,
+    min_relvol: $("btRvol").value,
+    hold_bars: $("btHold").value,
+    period: $("btPeriod").value,
+  });
+  const tickers = $("btTickers").value.trim();
+  if (tickers) params.set("tickers", tickers);
+
+  try {
+    const data = await jsonFetch(`/api/backtest?${params}`);
+    renderBacktest(data);
+    $("btStatus").textContent = `Done · ${data.overall?.trades || 0} trades simulated`;
+  } catch (err) {
+    $("btStatus").innerHTML = `<span style="color:var(--bear)">Back-test failed:</span> ${err.message}`;
+    showAlert("error", `<b>Back-test failed:</b> ${err.message}`, "backtest");
+    probeHealth();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function statCard(label, value, cls = "") {
+  return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${value}</div></div>`;
+}
+
+function renderBacktest(data) {
+  const o = data.overall || {};
+  if (!o.trades) {
+    $("btSummary").innerHTML = `<div class="empty">No trades generated. Try lowering filters.</div>`;
+    $("btBody").innerHTML = `<tr><td colspan="4" class="empty">No data.</td></tr>`;
+    return;
+  }
+  const winCls = o.win_rate_pct >= 50 ? "good" : "bad";
+  const expCls = o.expectancy_pct_per_trade > 0 ? "good" : "bad";
+  $("btSummary").innerHTML = `
+    <div class="stat-grid">
+      ${statCard("Trades", o.trades)}
+      ${statCard("Win rate", o.win_rate_pct + "%", winCls)}
+      ${statCard("Expectancy / trade", o.expectancy_pct_per_trade + "%", expCls)}
+      ${statCard("Avg return", o.avg_return_pct + "%")}
+      ${statCard("Avg win", o.avg_win_pct + "%", "good")}
+      ${statCard("Avg loss", o.avg_loss_pct + "%", "bad")}
+      ${statCard("Hit +20% target", o.outcomes.target_20)}
+      ${statCard("Stopped out", o.outcomes.stop)}
+      ${statCard("Timed out", o.outcomes.timeout)}
+      ${statCard("Median bars held", o.median_bars_held)}
+    </div>
+  `;
+
+  const rows = Object.entries(data.per_symbol || {})
+    .sort((a, b) => b[1].avg_return_pct - a[1].avg_return_pct);
+  $("btBody").innerHTML = rows.map(([sym, s]) => `
+    <tr>
+      <td class="sym">${sym}</td>
+      <td>${s.trades}</td>
+      <td class="${s.win_rate_pct >= 50 ? "dir-bullish" : "dir-bearish"}">${s.win_rate_pct}%</td>
+      <td class="${s.avg_return_pct > 0 ? "dir-bullish" : "dir-bearish"}">${s.avg_return_pct}%</td>
+    </tr>
+  `).join("") || `<tr><td colspan="4" class="empty">No per-symbol results.</td></tr>`;
+}
+
+$("btRunBtn").addEventListener("click", runBacktest);
+
+// ---- executor / approvals ----
+async function execSignal(sig) {
+  try {
+    const data = await jsonFetch("/api/execute", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(sig),
+    });
+    const dec = data.decision?.decision || "?";
+    const reason = data.decision?.reason || data.decision?.new_notional || "";
+    const errPart = data.error ? `\nBroker error: ${data.error}` : "";
+    alert(`Executor: ${dec}${reason ? " — " + reason : ""}\nStatus: ${data.trade?.status || "n/a"}${errPart}`);
+    loadState();
+  } catch (err) {
+    showAlert("error", `<b>Execute failed:</b> ${err.message}`, "exec");
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.classList.contains("execBtn")) {
+    const sig = JSON.parse(e.target.dataset.sig.replace(/&#39;/g, "'"));
+    if (confirm(`Send ${sig.symbol} ${sig.direction} signal to executor?`)) execSignal(sig);
+  }
+});
+
+async function loadState() {
+  let s;
+  try {
+    s = await jsonFetch("/api/state");
+  } catch (err) {
+    $("riskBanner").innerHTML = `<div class="alert alert-error"><b>Could not load state:</b> ${err.message}</div>`;
+    return;
+  }
+  try {
+    const c = s.counters || {};
+    const caps = s.caps || {};
+    const modePill = s.mode === "tiny"
+      ? `<span class="pill pill-bear">TINY ($100–$1k)</span>`
+      : `<span class="pill pill-bull">STANDARD</span>`;
+    const brokerPill = s.is_paper
+      ? `<span class="pill pill-bull">PAPER</span>`
+      : `<span class="pill pill-bear">LIVE</span>`;
+    const marketPill = s.market_open
+      ? `<span class="pill pill-bull">MARKET OPEN</span>`
+      : `<span class="pill" style="background:rgba(139,145,163,0.2); color:var(--muted);">MARKET CLOSED</span>`;
+    const schedPill = s.scheduler?.on
+      ? `<span class="pill pill-bull">AUTO-TRADING</span>`
+      : `<span class="pill" style="background:rgba(139,145,163,0.2); color:var(--muted);">MANUAL</span>`;
+    const banner = `<div class="stat" style="border-color:var(--accent);"><b>${s.broker}</b> · ${brokerPill} ${modePill} ${marketPill} ${schedPill}</div>`;
+    $("riskBanner").innerHTML = banner +
+      (c.killswitch_tripped ? `<div class="stat" style="border-color:var(--bear); margin-top:8px;"><b style="color:var(--bear)">⚠ KILLSWITCH ACTIVE</b> — new orders blocked.</div>` : "");
+
+    // Reflect current mode and scheduler config in the form controls.
+    $("modeSelect").value = s.mode || "standard";
+    if (s.scheduler) {
+      $("schedInterval").value = s.scheduler.scan_interval_seconds;
+      $("schedScore").value = s.scheduler.min_score_to_execute;
+    }
+
+    $("riskStats").innerHTML = `
+      ${statCard("Account equity", "$" + Number(s.account_equity || 0).toLocaleString())}
+      ${statCard("Trades today", `${c.trades_opened || 0} / ${caps.max_trades_per_day || "?"}`)}
+      ${statCard("Open notional", "$" + Number(c.open_notional || 0).toFixed(0))}
+      ${statCard("Per-trade cap", (caps.max_pct_per_trade || 0) + "%")}
+      ${statCard("Total exposure cap", (caps.max_pct_total_exposure || 0) + "%")}
+      ${statCard("Drawdown killswitch", (caps.daily_drawdown_killswitch_pct || 0) + "%")}
+    `;
+
+    const rows = s.recent_trades || [];
+    $("tradeLog").innerHTML = rows.length ? rows.map(t => `
+      <tr>
+        <td>${new Date(t.timestamp).toLocaleTimeString()}</td>
+        <td class="sym">${t.symbol}</td>
+        <td>${t.side}</td>
+        <td>${t.size_repr || t.qty || "—"}</td>
+        <td>$${Number(t.estimated_notional || 0).toFixed(0)}</td>
+        <td>${t.broker}</td>
+        <td class="notes">${t.risk_decision}</td>
+        <td>${t.status}</td>
+      </tr>
+    `).join("") : `<tr><td colspan="8" class="empty">No executor activity yet.</td></tr>`;
+  } catch (e) {
+    $("riskBanner").innerHTML = `<div class="alert alert-error">Render error: ${e.message}</div>`;
+  }
+}
+
+async function setKill(on) {
+  try {
+    await jsonFetch("/api/killswitch", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({on}),
+    });
+    loadState();
+  } catch (e) {
+    showAlert("error", `<b>Killswitch update failed:</b> ${e.message}`, "kill");
+  }
+}
+
+$("refreshStateBtn").addEventListener("click", loadState);
+$("killOnBtn").addEventListener("click", () => { if (confirm("Trip killswitch — block all new orders?")) setKill(true); });
+$("killOffBtn").addEventListener("click", () => setKill(false));
+
+async function applyMode() {
+  const mode = $("modeSelect").value;
+  const msg = mode === "tiny"
+    ? "Switch to TINY mode? One position at a time, fractional shares, no options. Confirm only if your account is under $1,000."
+    : "Switch to STANDARD mode? Diversified positions, options-capable. Recommended for $10k+ accounts.";
+  if (!confirm(msg)) return;
+  try {
+    await jsonFetch("/api/mode", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mode}),
+    });
+    loadState();
+  } catch (e) {
+    showAlert("error", `<b>Mode change failed:</b> ${e.message}`, "mode");
+  }
+}
+async function setScheduler(on) {
+  const body = {
+    on,
+    scan_interval_seconds: parseInt($("schedInterval").value),
+    min_score_to_execute: parseFloat($("schedScore").value),
+  };
+  if (on && !confirm(`Start auto-trading? Bot will scan every ${body.scan_interval_seconds}s during market hours and execute every signal ≥ score ${body.min_score_to_execute} through the risk caps.`)) return;
+  try {
+    await jsonFetch("/api/scheduler", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    loadState();
+  } catch (e) {
+    showAlert("error", `<b>Scheduler update failed:</b> ${e.message}`, "sched");
+  }
+}
+$("modeApplyBtn").addEventListener("click", applyMode);
+$("schedOnBtn").addEventListener("click", () => setScheduler(true));
+$("schedOffBtn").addEventListener("click", () => setScheduler(false));
+
+// Run a health check on page load so the user sees blocking issues
+// (uv missing, Python deps missing, broker creds missing) up front
+// instead of discovering them after clicking a button.
+probeHealth();
+loadState();
+
+// auto-load when Approvals tab is opened
+document.querySelector('.tab[data-tab="approvals"]').addEventListener("click", loadState);
+
+// ---- simulation ----
+async function runSimulation() {
+  const btn = $("simRunBtn");
+  btn.disabled = true;
+  $("simStatus").textContent = "Running back-test then replaying through executor… ~1 min.";
+  $("simSummary").innerHTML = "";
+  $("simEventsTable").style.display = "none";
+
+  const params = new URLSearchParams({
+    period: $("simPeriod").value,
+    min_score: $("simScore").value,
+    starting_equity: $("simEquity").value,
+    slippage_bps: $("simSlip").value,
+    oos: $("simOos").value,
+    split_fraction: $("simSplit").value,
+  });
+  try {
+    const data = await jsonFetch(`/api/simulate?${params}`);
+    if (data.warning) {
+      showAlert("warn", `<b>Simulation note:</b> ${data.warning}`, "sim");
+      $("simStatus").textContent = data.warning;
+      return;
+    }
+    if (data.mode === "oos") {
+      renderOos(data.train, data.test);
+      $("simStatus").textContent = `Train: ${data.train.total_signals} signals · Test: ${data.test.total_signals} signals. Compare them.`;
+    } else {
+      renderSim(data.report);
+      $("simStatus").textContent = `Simulated ${data.report.total_signals} signals through caps + slippage + MTM.`;
+    }
+  } catch (e) {
+    $("simStatus").innerHTML = `<span style="color:var(--bear)">Simulation failed:</span> ${e.message}`;
+    showAlert("error", `<b>Simulation failed:</b> ${e.message}`, "sim");
+    probeHealth();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function buildStatGrid(r, label) {
+  const retCls = r.return_pct > 0 ? "good" : "bad";
+  return `
+    <h4 style="margin: 12px 0 4px;">${label}</h4>
+    <div class="stat-grid">
+      ${statCard("Final equity", "$" + r.final_equity.toFixed(0), retCls)}
+      ${statCard("Return", r.return_pct + "%", retCls)}
+      ${statCard("Realized DD", r.max_drawdown_pct + "%", "bad")}
+      ${statCard("Unrealized DD", r.max_unrealized_drawdown_pct + "%", "bad")}
+      ${statCard("Signals", r.total_signals)}
+      ${statCard("Filled", r.orders_filled, "good")}
+      ${statCard("Rejected", r.orders_rejected, r.orders_rejected > 0 ? "bad" : "")}
+      ${statCard("Resized", r.orders_resized)}
+      ${statCard("Killswitch", r.killswitch_tripped ? "YES" : "no", r.killswitch_tripped ? "bad" : "good")}
+      ${statCard("Slippage", r.slippage_bps + " bps")}
+    </div>
+  `;
+}
+
+function renderSim(r) {
+  $("simSummary").innerHTML = buildStatGrid(r, "Results");
+  const body = $("simEventsBody");
+  const events = r.events || [];
+  $("simEventsTable").style.display = events.length ? "" : "none";
+  body.innerHTML = events.slice(-100).reverse().map(e => `
+    <tr>
+      <td>${e.date}</td>
+      <td class="sym">${e.symbol || ""}</td>
+      <td>${e.kind}</td>
+      <td class="notes">${e.detail}</td>
+      <td>$${Number(e.equity_after).toFixed(0)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderOos(train, test) {
+  const gap = (train.return_pct - test.return_pct).toFixed(2);
+  const warning = Math.abs(parseFloat(gap)) > 10
+    ? `<div class="stat" style="border-color:var(--bear); margin-bottom:8px;">⚠ Train/Test return gap is ${gap}pp — possible over-fit or regime change. The test period is what live trading would experience.</div>`
+    : `<div class="stat" style="border-color:var(--bull); margin-bottom:8px;">Train/Test return gap is ${gap}pp — consistent enough to suggest the strategy isn't purely curve-fit.</div>`;
+  $("simSummary").innerHTML = warning + buildStatGrid(train, "Train (in-sample)") + buildStatGrid(test, "Test (out-of-sample)");
+  const body = $("simEventsBody");
+  const events = (test.events || []);
+  $("simEventsTable").style.display = events.length ? "" : "none";
+  body.innerHTML = events.slice(-100).reverse().map(e => `
+    <tr>
+      <td>${e.date}</td>
+      <td class="sym">${e.symbol || ""}</td>
+      <td>${e.kind}</td>
+      <td class="notes">${e.detail}</td>
+      <td>$${Number(e.equity_after).toFixed(0)}</td>
+    </tr>
+  `).join("");
+}
+
+$("simRunBtn").addEventListener("click", runSimulation);
+</script>
+</body>
+</html>
