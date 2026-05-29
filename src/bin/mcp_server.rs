@@ -217,6 +217,49 @@ fn tools_list() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {} }
         }),
         json!({
+            "name": "render_chart_for_vision",
+            "description": "Render the symbol's candlestick chart (with volume and the top geometric \
+                detections annotated as trigger/target/stop lines) and return it as an IMAGE you can \
+                look at directly. This is the LLM-vision second-opinion layer: after calling \
+                detect_chart_patterns for the deterministic geometry, call this to SEE the chart and \
+                form an independent visual read. Look for things the rule engine can't catch — sloppy \
+                or forming patterns, trendline breaks, channels, divergences — and explicitly note where \
+                your visual read AGREES or DISAGREES with the geometric detections (blue=trigger, \
+                green=target, red=stop lines on the chart). Requires a vision-capable client.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["symbol"],
+                "properties": {
+                    "symbol": { "type": "string" },
+                    "period": { "type": "string", "enum": ["3mo", "6mo", "1y", "2y"], "default": "6mo" },
+                    "annotate": { "type": "boolean", "default": true, "description": "Overlay geometric detection levels" }
+                }
+            }
+        }),
+        json!({
+            "name": "detect_chart_patterns",
+            "description": "Run rule-based geometric chart-pattern detection on a symbol's daily bars. \
+                Detects reversal patterns (head & shoulders + inverse, double/triple top & bottom), \
+                continuation patterns (flags, pennants, triangles, wedges), candlestick signals \
+                (engulfing, hammer, shooting star, doji, morning/evening star), and context levels \
+                (support/resistance, Fibonacci retracements, VWAP bands). Each detection returns the \
+                direction, a confidence score (0-1), the confirmation trigger price, a measured-move \
+                target, and an invalidation stop. \
+                \n\nThese are DETERMINISTIC geometric facts, not predictions — a detected double_top is \
+                a description of the price shape, not a guarantee it resolves bearishly. Cross-reference \
+                with scan_market (which combines VWAP/MACD/RVOL/sweep) and run_backtest before acting. \
+                Use this when the user asks 'what patterns are forming on X' or to confirm a scanner signal.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["symbol"],
+                "properties": {
+                    "symbol": { "type": "string", "description": "Ticker symbol, e.g. AAPL" },
+                    "period": { "type": "string", "enum": ["3mo", "6mo", "1y", "2y"], "default": "6mo" },
+                    "pivot_order": { "type": "integer", "default": 3, "description": "Swing-pivot sensitivity; lower finds more (noisier) pivots" }
+                }
+            }
+        }),
+        json!({
             "name": "execute_paper_trade",
             "description": "Place a real order at the configured broker — STRICTLY PAPER ONLY. The server \
                 refuses with HTTP 403 if any live broker is connected, and refuses with HTTP 409 if the \
@@ -269,6 +312,15 @@ fn prompts_list() -> Vec<Value> {
             "arguments": [
                 { "name": "min_score", "description": "Minimum composite score (default 4)", "required": false },
                 { "name": "direction", "description": "bullish | bearish | both (default both)", "required": false }
+            ]
+        }),
+        json!({
+            "name": "analyze_chart",
+            "description": "Full dual-read chart analysis for one symbol: deterministic geometric pattern \
+                detection PLUS an LLM-vision second opinion, reconciled into one view.",
+            "arguments": [
+                { "name": "symbol", "description": "Ticker to analyze", "required": true },
+                { "name": "period", "description": "3mo | 6mo | 1y | 2y (default 6mo)", "required": false }
             ]
         }),
         json!({
@@ -346,6 +398,34 @@ fn get_prompt(params: &Value) -> Result<Value, (i32, String)> {
                 )
             )
         }
+        "analyze_chart" => {
+            let symbol = arg("symbol");
+            if symbol.is_empty() {
+                return Err((-32602, "analyze_chart requires a `symbol` argument".into()));
+            }
+            let period = if arg("period").is_empty() { "6mo".to_string() } else { arg("period") };
+            (
+                "Dual-read chart analysis (geometric + vision)",
+                format!(
+                    "Analyze {symbol} ({period}) using BOTH detection layers, then reconcile:\n\
+                    \n\
+                    1. Call `detect_chart_patterns` with symbol={symbol}, period={period}. This is the \
+                    deterministic geometric read — exact patterns with trigger/target/stop levels.\n\
+                    2. Call `render_chart_for_vision` with symbol={symbol}, period={period}. Actually LOOK \
+                    at the returned chart image. Form your own visual read.\n\
+                    3. Reconcile the two into a single table:\n\
+                       | Pattern | Geometric? | Visual confirm? | Verdict |\n\
+                       - CONFIRMED: both the rules and your eyes agree.\n\
+                       - GEOMETRIC-ONLY: rules flagged it but it looks weak/invalid to you — say why.\n\
+                       - VISUAL-ONLY: you see something (channel, trendline break, divergence) the rules missed.\n\
+                    4. For each CONFIRMED pattern, restate its trigger / target / stop.\n\
+                    5. Cross-check against `scan_market` (does the momentum scanner agree on direction?) and \
+                    note alignment or conflict.\n\
+                    6. Conclude with the single highest-conviction setup (or 'no clean setup') and the \
+                    specific level that would confirm or invalidate it. Do NOT place any order — analysis only."
+                )
+            )
+        }
         "bridge_to_robinhood" => {
             let min_score = if arg("min_score").is_empty() { "4".to_string() } else { arg("min_score") };
             let size_pct = if arg("size_pct_of_rh_equity").is_empty() { "5".to_string() } else { arg("size_pct_of_rh_equity") };
@@ -410,6 +490,10 @@ async fn call_tool(ctx: &Ctx, params: &Value) -> Result<Value, (i32, String)> {
     if name == "execute_paper_trade" {
         return execute_paper_trade(ctx, &args).await;
     }
+    // render_chart_for_vision returns MCP image content, not text.
+    if name == "render_chart_for_vision" {
+        return render_chart_for_vision(ctx, &args).await;
+    }
 
     let endpoint = match name {
         "scan_market" => path_with_query("/api/scan", &args, &["min_score", "min_relvol", "direction", "tickers"]),
@@ -417,6 +501,7 @@ async fn call_tool(ctx: &Ctx, params: &Value) -> Result<Value, (i32, String)> {
         "simulate_strategy" => path_with_query("/api/simulate", &args, &["starting_equity", "min_score", "slippage_bps", "period", "oos", "split_fraction"]),
         "get_risk_state" => "/api/state".to_string(),
         "check_health" => "/api/health".to_string(),
+        "detect_chart_patterns" => path_with_query("/api/patterns", &args, &["symbol", "period", "pivot_order"]),
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };
 
@@ -505,6 +590,61 @@ async fn execute_paper_trade(ctx: &Ctx, args: &Value) -> Result<Value, (i32, Str
     Ok(json!({
         "content": [{ "type": "text", "text": summary }],
         "isError": is_err,
+    }))
+}
+
+async fn render_chart_for_vision(ctx: &Ctx, args: &Value) -> Result<Value, (i32, String)> {
+    if args.get("symbol").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        return Ok(json!({
+            "content": [{ "type": "text", "text": "Refusing — `symbol` is required." }],
+            "isError": true,
+        }));
+    }
+    let endpoint = path_with_query("/api/chart", args, &["symbol", "period", "annotate"]);
+    let url = format!("{}{}", ctx.base, endpoint);
+    let resp = match ctx.http.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => return Ok(json!({
+            "content": [{ "type": "text", "text":
+                format!("Chart request to {url} failed: {e}. Is the scanner HTTP server running (./run.sh)?") }],
+            "isError": true,
+        })),
+    };
+    let body: Value = serde_json::from_slice(&resp.bytes().await.unwrap_or_default())
+        .unwrap_or_else(|_| json!({}));
+
+    if let Some(err) = body.get("error").and_then(|v| v.as_str()) {
+        return Ok(json!({
+            "content": [{ "type": "text", "text": format!("Chart render error: {err}") }],
+            "isError": true,
+        }));
+    }
+
+    let png = body.get("png_base64").and_then(|v| v.as_str()).unwrap_or("");
+    if png.is_empty() {
+        return Ok(json!({
+            "content": [{ "type": "text", "text": "No image returned from chart renderer." }],
+            "isError": true,
+        }));
+    }
+
+    // Pair the image with the geometric detections so the model can compare its
+    // visual read against the deterministic facts.
+    let detections = body.get("annotated_detections").cloned().unwrap_or(json!([]));
+    let symbol = body.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+    let guidance = format!(
+        "Chart for {symbol}. Annotation lines: blue=trigger, green=target, red=stop.\n\n\
+        Geometric detector found these (compare your visual read against them):\n{}\n\n\
+        Now look at the chart image and give an independent second opinion: which detections do you \
+        visually confirm, which look wrong, and what does the rule engine miss?",
+        serde_json::to_string_pretty(&detections).unwrap_or_default()
+    );
+
+    Ok(json!({
+        "content": [
+            { "type": "image", "data": png, "mimeType": "image/png" },
+            { "type": "text", "text": guidance }
+        ]
     }))
 }
 

@@ -116,6 +116,54 @@ async fn api_universe() -> Json<Value> {
     }
 }
 
+#[derive(Deserialize)]
+struct PatternsParams {
+    symbol: String,
+    period: Option<String>,
+    pivot_order: Option<u32>,
+}
+
+async fn api_patterns(Query(p): Query<PatternsParams>) -> (axum::http::StatusCode, Json<Value>) {
+    use axum::http::StatusCode;
+    let mut args = vec![format!("--symbol={}", p.symbol)];
+    if let Some(per) = p.period { args.push(format!("--period={per}")); }
+    if let Some(o) = p.pivot_order { args.push(format!("--pivot-order={o}")); }
+    match run_python("patterns_cli.py", args).await {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => {
+            tracing::error!(error=%e, "patterns failed");
+            (StatusCode::BAD_GATEWAY, Json(json!({
+                "error": e,
+                "hint": "Visit /api/health for what's wrong.",
+            })))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ChartParams {
+    symbol: String,
+    period: Option<String>,
+    annotate: Option<bool>,
+}
+
+async fn api_chart(Query(p): Query<ChartParams>) -> (axum::http::StatusCode, Json<Value>) {
+    use axum::http::StatusCode;
+    let mut args = vec![format!("--symbol={}", p.symbol)];
+    if let Some(per) = p.period { args.push(format!("--period={per}")); }
+    args.push(format!("--annotate={}", p.annotate.unwrap_or(true)));
+    match run_python("chart_render.py", args).await {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => {
+            tracing::error!(error=%e, "chart render failed");
+            (StatusCode::BAD_GATEWAY, Json(json!({
+                "error": e,
+                "hint": "Chart rendering needs mplfinance+matplotlib. Run: cd python && uv sync",
+            })))
+        }
+    }
+}
+
 /// Reports every common failure mode the UI should warn about so the user knows
 /// exactly what to fix before clicking buttons that depend on these.
 async fn api_health(AxState(st): AxState<AppState>) -> Json<Value> {
@@ -405,6 +453,8 @@ async fn main() {
         .route("/api/scan", get(api_scan))
         .route("/api/backtest", get(api_backtest))
         .route("/api/universe", get(api_universe))
+        .route("/api/patterns", get(api_patterns))
+        .route("/api/chart", get(api_chart))
         .route("/api/execute", post(api_execute))
         .route("/api/execute-mcp", post(api_execute_mcp))
         .route("/api/state", get(api_state))

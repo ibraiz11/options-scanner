@@ -10,6 +10,9 @@ dependencies = [
     # Polars requires pyarrow when converting pandas frames with nullable dtypes
     # (yfinance returns Int64 volume columns under newer pandas versions).
     "pyarrow>=15.0",
+    # Candlestick rendering for the LLM-vision second-opinion layer.
+    "mplfinance>=0.12.10b0",
+    "matplotlib>=3.8",
 ]
 
 [tool.ruff]

@@ -176,7 +176,7 @@ claude mcp add options-scanner \
   -e SCANNER_HTTP_BASE=http://localhost:8000
 ```
 
-Six tools become available:
+Eight tools become available:
 
 | Tool | What it does |
 |---|---|
@@ -185,16 +185,34 @@ Six tools become available:
 | `simulate_strategy` | Replay through caps + slippage + MTM, optional OOS split |
 | `get_risk_state` | Account, mode, caps, today's counters, kill-switch status |
 | `check_health` | Diagnose `uv` / Python / broker / state-dir issues, with concrete fixes |
+| `detect_chart_patterns` | Rule-based geometric pattern detection (see below) |
+| `render_chart_for_vision` | Render the candlestick chart as an image for an LLM-vision second opinion |
 | `execute_paper_trade` | **Paper-only gated** order placement against Alpaca paper |
 
-Four prompts (invokable as slash commands in Claude Code):
+Five prompts (invokable as slash commands in Claude Code):
 
 | Prompt | What it does |
 |---|---|
 | `/options-scanner:morning_briefing` | Risk state → scan → ranked summary, no execution |
 | `/options-scanner:risk_audit` | OOS simulation, train-vs-test comparison, edge call |
 | `/options-scanner:propose_trade` | Health → state → scan → structured proposal, no execution |
+| `/options-scanner:analyze_chart` | Dual-read: geometric detection + vision second opinion, reconciled |
 | `/options-scanner:bridge_to_robinhood` | Orchestrate analytics from this MCP + execution via Robinhood Agentic's MCP, in one workflow |
+
+### Chart-pattern detection
+
+`python/patterns.py` is a deterministic, rule-based geometric pattern detector. It finds swing pivots (a fractal zigzag) and matches classical patterns, returning for each a direction, confidence (0–1), confirmation trigger, measured-move target, and invalidation stop.
+
+| Family | Patterns |
+|---|---|
+| **Reversal** | head & shoulders (+ inverse), double top/bottom, triple top/bottom |
+| **Continuation** | bull/bear flags, ascending/descending/symmetrical triangles, rising/falling wedges |
+| **Candlestick** | engulfing, hammer, shooting star, doji, morning/evening star |
+| **Context** | support/resistance zones, Fibonacci retracements, VWAP bands |
+
+These are *facts about the price shape*, not predictions — a detected `double_top` describes geometry, it does not guarantee a bearish resolution. Cross-reference with `scan_market` and `run_backtest` before acting.
+
+The **LLM-vision second opinion** (`render_chart_for_vision` / `/analyze_chart`) renders the actual candlestick chart with the detections annotated (blue=trigger, green=target, red=stop) and hands it to a vision-capable model. The model forms an independent visual read and reports where it agrees or disagrees with the rule engine — catching forming/sloppy patterns, trendline breaks, and channels the geometry misses. `python/test_patterns.py` has 8 unit tests pinning the geometric detectors against hand-built synthetic patterns.
 
 When your Robinhood Agentic access activates, register their MCP alongside this one, then invoke `/options-scanner:bridge_to_robinhood`. Claude follows a fixed recipe: our `check_health` → our `get_risk_state` → Robinhood account info → our `scan_market` → Robinhood quote → drift check → structured proposal → wait for confirm → Robinhood order tool.
 
