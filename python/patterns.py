@@ -47,7 +47,7 @@ class Detection:
     pattern: str
     family: str                       # "reversal" | "continuation" | "candlestick" | "context"
     direction: Direction
-    confidence: float                 # 0..1
+    confidence: float                 # 0..1 (raw geometric quality)
     start_idx: int
     end_idx: int
     trigger: float | None = None      # price that confirms the pattern (breakout/neckline)
@@ -55,10 +55,18 @@ class Detection:
     stop: float | None = None         # invalidation level
     key_levels: dict = field(default_factory=dict)
     notes: str = ""
+    # Context enrichment (filled by enrich_context). These are why the v2 detector
+    # is better than v1: the back-test showed raw patterns are regime-dependent, so
+    # we now tag whether each pattern aligns with the prevailing trend and whether
+    # recent volume confirms it, and fold both into an adjusted confidence + R:R.
+    trend_aligned: bool | None = None
+    volume_confirmed: bool | None = None
+    risk_reward: float | None = None
+    score: float | None = None        # adjusted confidence after context
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        for k in ("confidence", "trigger", "target", "stop"):
+        for k in ("confidence", "trigger", "target", "stop", "risk_reward", "score"):
             if d.get(k) is not None:
                 d[k] = round(float(d[k]), 4)
         d["key_levels"] = {k: round(float(v), 4) for k, v in d["key_levels"].items()}
@@ -547,10 +555,80 @@ def vwap_bands(df: pd.DataFrame, window: int = 20, n_std: float = 2.0) -> list[D
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def detect_all(df: pd.DataFrame, pivot_order: int = 3, dedupe_pct: float = 1.5) -> list[dict]:
+def _trend_arrays(df: pd.DataFrame, sma_period: int = 50, slope_lookback: int = 10):
+    """Return (sma, trend_up_bool_array). trend_up[i] = close above a rising SMA."""
+    close = df["close"]
+    period = min(sma_period, max(5, len(df) // 4))
+    sma = close.rolling(period).mean()
+    sma_prev = sma.shift(slope_lookback)
+    trend_up = ((close > sma) & (sma > sma_prev)).to_numpy()
+    return sma.to_numpy(), trend_up
+
+
+def enrich_context(df: pd.DataFrame, detections: list[Detection]) -> list[Detection]:
     """
-    Run every detector and return a flat, JSON-ready list sorted by confidence.
+    Tag each detection with trend alignment, volume confirmation, risk/reward, and an
+    adjusted `score`. This is the core v2 improvement: the back-test showed raw
+    geometric patterns are heavily regime-dependent, so context now modulates ranking.
+
+    - trend_aligned: bullish pattern in an uptrend, or bearish in a downtrend. Buying
+      bullish reversals in an uptrend (pullback buys) is statistically more robust than
+      catching falling knives.
+    - volume_confirmed: recent volume above the 20-day average (breakout conviction).
+    - score: confidence boosted up to +25% when aligned + volume-confirmed, cut up to
+      -40% when fighting the trend.
+    """
+    _, trend_up = _trend_arrays(df)
+    vol = df["volume"].to_numpy()
+    vol_avg = df["volume"].rolling(20).mean().to_numpy()
+    n = len(df)
+
+    for d in detections:
+        idx = min(max(d.end_idx, 0), n - 1)
+
+        # trend alignment (skip pure-context detections)
+        if d.direction in ("bullish", "bearish") and not (idx < 1 or vol_avg[idx] != vol_avg[idx]):
+            up = bool(trend_up[idx]) if idx < len(trend_up) else False
+            d.trend_aligned = (d.direction == "bullish" and up) or (d.direction == "bearish" and not up)
+        else:
+            d.trend_aligned = None
+
+        # volume confirmation: any of the last 3 bars above 20d avg
+        lo = max(0, idx - 2)
+        recent_vol = vol[lo: idx + 1]
+        avg = vol_avg[idx]
+        d.volume_confirmed = bool((recent_vol > avg).any()) if avg == avg else None
+
+        # risk/reward from the pattern's own levels
+        if d.trigger is not None and d.target is not None and d.stop is not None:
+            reward = abs(d.target - d.trigger)
+            risk = abs(d.trigger - d.stop)
+            d.risk_reward = round(reward / risk, 2) if risk > 0 else None
+
+        # adjusted score
+        s = d.confidence
+        if d.trend_aligned is True:
+            s *= 1.25
+        elif d.trend_aligned is False:
+            s *= 0.6
+        if d.volume_confirmed:
+            s *= 1.1
+        if d.risk_reward is not None and d.risk_reward < 1.0:
+            s *= 0.8  # poor reward-to-risk
+        d.score = min(round(s, 3), 1.0)
+
+    return detections
+
+
+def detect_all(df: pd.DataFrame, pivot_order: int = 3, dedupe_pct: float = 1.5,
+               only_trend_aligned: bool = False) -> list[dict]:
+    """
+    Run every detector, enrich with trend/volume context, dedupe overlapping same-type
+    detections, and return a flat JSON-ready list sorted by adjusted `score`.
     `df` must have lowercase columns: open, high, low, close, volume.
+
+    only_trend_aligned: if True, drop directional detections that fight the prevailing
+    trend (the back-test shows these have materially worse expectancy).
     """
     df = df.reset_index(drop=True)
     pivots = find_pivots(df, order=pivot_order, dedupe_pct=dedupe_pct)
@@ -565,7 +643,22 @@ def detect_all(df: pd.DataFrame, pivot_order: int = 3, dedupe_pct: float = 1.5) 
     detections += fibonacci_levels(df, pivots)
     detections += vwap_bands(df)
 
-    detections.sort(key=lambda d: d.confidence, reverse=True)
+    detections = enrich_context(df, detections)
+
+    # Dedupe: keep the highest-score detection per (pattern, rounded trigger) so we
+    # don't report five overlapping double_tops at the same level.
+    best: dict[tuple, Detection] = {}
+    for d in detections:
+        key = (d.pattern, round(d.trigger, 1) if d.trigger else d.end_idx)
+        cur = best.get(key)
+        if cur is None or (d.score or 0) > (cur.score or 0):
+            best[key] = d
+    detections = list(best.values())
+
+    if only_trend_aligned:
+        detections = [d for d in detections if d.trend_aligned is not False]
+
+    detections.sort(key=lambda d: (d.score if d.score is not None else d.confidence), reverse=True)
     return [d.to_dict() for d in detections]
 
 
